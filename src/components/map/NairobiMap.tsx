@@ -1,5 +1,4 @@
 //src/components/map/NairobiMap.tsx
-
 import { useEffect, useRef, useState, useCallback } from "react";
 import mapboxgl from "mapbox-gl";
 import {
@@ -25,9 +24,10 @@ const SOURCE_CLUSTERS = "clusters";
 const SOURCE_ROUTES   = "routes";
 const SOURCE_TRAILS   = "trails";
 
+// ── Toggle feature IDs ────────────────────────────────────────────────────────
+type ToggleFeature = "orders" | "drivers" | "clusters" | "routes" | "trails";
+
 // ── Coordinate guard ──────────────────────────────────────────────────────────
-// Prevents the [0,0] snap-to-origin flicker.
-// A coordinate is valid if it's a finite number and not at the null island.
 function isValidCoord(lat: number, lon: number): boolean {
   return (
     Number.isFinite(lat) &&
@@ -38,9 +38,6 @@ function isValidCoord(lat: number, lon: number): boolean {
   );
 }
 
-// Validate GeoJSON LineString — reject any feature whose first coordinate
-// is [0,0] or contains non-finite numbers (backend occasionally emits these
-// during the OSRM fallback path before the real geometry arrives).
 function isValidLineString(geojson: unknown): boolean {
   if (!geojson || typeof geojson !== "object") return false;
   const g = geojson as Record<string, unknown>;
@@ -48,7 +45,6 @@ function isValidLineString(geojson: unknown): boolean {
   if (!geometry) return false;
   const coords = geometry.coordinates as [number, number][] | undefined;
   if (!Array.isArray(coords) || coords.length < 2) return false;
-  // Check the first and last coord — reject obvious [0,0] placeholders
   for (const c of [coords[0], coords[coords.length - 1]]) {
     if (
       !Array.isArray(c) ||
@@ -60,6 +56,117 @@ function isValidLineString(geojson: unknown): boolean {
   return true;
 }
 
+function stableKeys(obj: Record<string, unknown>): string {
+  return Object.keys(obj).sort().join(",");
+}
+
+// ── Map toggle button component ───────────────────────────────────────────────
+function ToggleButton({
+  label,
+  icon,
+  active,
+  onClick,
+  color,
+}: {
+  label: string;
+  icon: string;
+  active: boolean;
+  onClick: () => void;
+  color: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`Toggle ${label}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "6px 10px",
+        borderRadius: 6,
+        border: `1px solid ${active ? color + "60" : "#1e3a5f"}`,
+        background: active ? `${color}18` : "rgba(8,12,24,0.6)",
+        cursor: "pointer",
+        fontFamily: "var(--font-mono)",
+        fontSize: 9,
+        color: active ? color : "#3a6080",
+        letterSpacing: "0.08em",
+        transition: "all 0.2s",
+        whiteSpace: "nowrap",
+      }}
+      onMouseEnter={(e) => {
+        if (!active) e.currentTarget.style.borderColor = color + "40";
+      }}
+      onMouseLeave={(e) => {
+        if (!active) e.currentTarget.style.borderColor = "#1e3a5f";
+      }}
+    >
+      <span style={{ fontSize: 11 }}>{icon}</span>
+      {label.toUpperCase()}
+      {/* Active dot */}
+      <div
+        style={{
+          width: 4,
+          height: 4,
+          borderRadius: "50%",
+          background: active ? color : "#1e3a5f",
+          boxShadow: active ? `0 0 6px ${color}` : "none",
+          marginLeft: 2,
+          flexShrink: 0,
+        }}
+      />
+    </button>
+  );
+}
+
+// ── Map feature toggle controls ───────────────────────────────────────────────
+function MapToggleControls({
+  visibility,
+  onToggle,
+}: {
+  visibility: Record<ToggleFeature, boolean>;
+  onToggle: (f: ToggleFeature) => void;
+}) {
+  const TOGGLES: { id: ToggleFeature; label: string; icon: string; color: string }[] = [
+    { id: "orders",   label: "Orders",   icon: "📦", color: "#00ccff" },
+    { id: "drivers",  label: "Drivers",  icon: "🛵", color: "#7fff00" },
+    { id: "clusters", label: "Clusters", icon: "⬡",  color: "#ffaa00" },
+    { id: "routes",   label: "Routes",   icon: "〰",  color: "#4ECDC4" },
+    { id: "trails",   label: "Trails",   icon: "✦",  color: "#DDA0DD" },
+  ];
+
+  return (
+    <div
+      className="absolute"
+      style={{
+        top: 16,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 10,
+        display: "flex",
+        gap: 6,
+        background: "rgba(8,12,24,0.88)",
+        border: "1px solid rgba(0,204,255,0.15)",
+        borderRadius: 10,
+        padding: "6px 8px",
+        backdropFilter: "blur(12px)",
+        boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
+      }}
+    >
+      {TOGGLES.map((t) => (
+        <ToggleButton
+          key={t.id}
+          label={t.label}
+          icon={t.icon}
+          active={visibility[t.id]}
+          onClick={() => onToggle(t.id)}
+          color={t.color}
+        />
+      ))}
+    </div>
+  );
+}
+
 export default function NairobiMap() {
   const mapContainer     = useRef<HTMLDivElement>(null);
   const map              = useRef<mapboxgl.Map | null>(null);
@@ -67,15 +174,70 @@ export default function NairobiMap() {
   const driverMarkersRef = useRef<Record<string, mapboxgl.Marker>>({});
   const popupRef         = useRef<mapboxgl.Popup | null>(null);
 
-  // mapReady gates ALL data effects — prevents [0,0] coordinate flicker
-  // on initial render before the map style is loaded.
   const [mapReady, setMapReady] = useState(false);
+
+  // Feature visibility toggles
+  const [visibility, setVisibility] = useState<Record<ToggleFeature, boolean>>({
+    orders:   true,
+    drivers:  true,
+    clusters: true,
+    routes:   true,
+    trails:   true,
+  });
 
   const { orders, clusters, routes, status, drivers } = useSimulationStore();
   const { driverPositions, deliveredOrderIds, driverTrails } = useMapStore();
   const { openDrawer } = useUIStore();
 
   const isCompleted = status === "completed";
+
+  // ── Toggle handler ────────────────────────────────────────────────────────
+  const handleToggle = useCallback((feature: ToggleFeature) => {
+    setVisibility((prev) => ({ ...prev, [feature]: !prev[feature] }));
+  }, []);
+
+  // ── Apply layer visibility to Mapbox layers ───────────────────────────────
+  useEffect(() => {
+    const m = map.current;
+    if (!m || !mapReady) return;
+
+    const layerVisibility = (v: boolean) => (v ? "visible" : "none") as "visible" | "none";
+
+    // Clusters
+    if (m.getLayer(LAYER_CLUSTER_CIRCLES)) {
+      m.setLayoutProperty(LAYER_CLUSTER_CIRCLES, "visibility", layerVisibility(visibility.clusters));
+    }
+    // Routes
+    if (m.getLayer(LAYER_ROUTE_GLOW)) {
+      m.setLayoutProperty(LAYER_ROUTE_GLOW, "visibility", layerVisibility(visibility.routes));
+    }
+    if (m.getLayer(LAYER_ROUTE_BASE)) {
+      m.setLayoutProperty(LAYER_ROUTE_BASE, "visibility", layerVisibility(visibility.routes));
+    }
+    // Trails
+    if (m.getLayer(LAYER_TRAIL_GLOW)) {
+      m.setLayoutProperty(LAYER_TRAIL_GLOW, "visibility", layerVisibility(visibility.trails));
+    }
+    if (m.getLayer(LAYER_TRAIL_BASE)) {
+      m.setLayoutProperty(LAYER_TRAIL_BASE, "visibility", layerVisibility(visibility.trails));
+    }
+    if (m.getLayer(LAYER_TRAIL_DOTS)) {
+      m.setLayoutProperty(LAYER_TRAIL_DOTS, "visibility", layerVisibility(visibility.trails));
+    }
+  }, [visibility, mapReady]);
+
+  // ── Apply marker visibility ───────────────────────────────────────────────
+  useEffect(() => {
+    Object.values(markersRef.current).forEach((m) => {
+      m.getElement().style.display = visibility.orders ? "" : "none";
+    });
+  }, [visibility.orders]);
+
+  useEffect(() => {
+    Object.values(driverMarkersRef.current).forEach((m) => {
+      m.getElement().style.display = visibility.drivers ? "" : "none";
+    });
+  }, [visibility.drivers]);
 
   // ── Shared popup helper ───────────────────────────────────────────────────
   const showPopup = useCallback((lngLat: mapboxgl.LngLatLike, html: string) => {
@@ -92,7 +254,6 @@ export default function NairobiMap() {
   }, []);
 
   // ── Init map ──────────────────────────────────────────────────────────────
-  // Runs ONCE. The `map.current` guard prevents double-init from StrictMode.
   useEffect(() => {
     if (map.current || !mapContainer.current) return;
 
@@ -118,7 +279,6 @@ export default function NairobiMap() {
         "star-intensity": 0.6,
       });
 
-      // ── Sources ───────────────────────────────────────────────────────────
       m.addSource(SOURCE_CLUSTERS, {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -132,9 +292,6 @@ export default function NairobiMap() {
         data: { type: "FeatureCollection", features: [] },
       });
 
-      // ── Layers ────────────────────────────────────────────────────────────
-
-      // 1. Cluster zone halos
       m.addLayer({
         id: LAYER_CLUSTER_CIRCLES,
         type: "circle",
@@ -149,7 +306,6 @@ export default function NairobiMap() {
         },
       });
 
-      // 2. Route glow
       m.addLayer({
         id: LAYER_ROUTE_GLOW,
         type: "line",
@@ -163,7 +319,6 @@ export default function NairobiMap() {
         layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // 3. Route base line
       m.addLayer({
         id: LAYER_ROUTE_BASE,
         type: "line",
@@ -176,7 +331,6 @@ export default function NairobiMap() {
         layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // 4. Trail glow
       m.addLayer({
         id: LAYER_TRAIL_GLOW,
         type: "line",
@@ -194,7 +348,6 @@ export default function NairobiMap() {
         layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // 5. Trail solid line
       m.addLayer({
         id: LAYER_TRAIL_BASE,
         type: "line",
@@ -208,7 +361,6 @@ export default function NairobiMap() {
         layout: { "line-cap": "round", "line-join": "round" },
       });
 
-      // 6. Trail leading dot
       m.addLayer({
         id: LAYER_TRAIL_DOTS,
         type: "circle",
@@ -232,47 +384,41 @@ export default function NairobiMap() {
         "bottom-right",
       );
 
-      // Close popup on map click
       m.on("click", () => popupRef.current?.remove());
 
-      // Signal that the map and all sources/layers are ready.
-      // Using 'idle' ensures the first render is complete before we
-      // start adding markers — prevents the "marker teleports to [0,0]" bug.
       m.once("idle", () => setMapReady(true));
     });
 
     return () => {
       popupRef.current?.remove();
-      // Don't call m.remove() on cleanup in StrictMode — it would kill the map
-      // before the second mount. Instead we guard with `if (map.current)` above.
-      // Only remove on true unmount (component leaves the tree).
       setMapReady(false);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // ^ Empty deps: this effect must ONLY run once. Adding deps would re-init the map.
 
-  // ── Order markers (with hover popup) ─────────────────────────────────────
-  // BUG FIX: added `isValidCoord` guard to skip any order with bad coordinates.
-  // Bad coords arrive during the ORDER_CREATED burst before OSRM snapping finishes.
+  // ── Order markers ─────────────────────────────────────────────────────────
+  const orderIds = Object.keys(orders).sort().join(",");
+  const deliveredCount = deliveredOrderIds.size;
+  const clusterKeys = stableKeys(clusters as Record<string, unknown>);
+
   useEffect(() => {
     const m = map.current;
     if (!m || !mapReady) return;
 
     Object.values(orders).forEach((order) => {
-      // ← GUARD: skip bad coordinates entirely
       if (!isValidCoord(order.lat, order.lon)) return;
 
       const isDelivered  = deliveredOrderIds.has(order.id);
       const clusterColor = order.cluster_id ? clusters[order.cluster_id]?.color : null;
       const activeColor  = clusterColor ?? "#00ccff";
+      const visible      = visibility.orders;
 
       if (markersRef.current[order.id]) {
-        // Update existing marker style in-place (no remove/re-add = no flicker)
         const el = markersRef.current[order.id].getElement();
         el.style.background  = isDelivered ? "#7fff00" : `${activeColor}44`;
         el.style.borderColor = isDelivered ? "#7fff00" : activeColor;
         el.style.boxShadow   = isDelivered ? "0 0 12px #7fff00" : "none";
         el.style.transform   = isDelivered ? "scale(0.75)" : "scale(1)";
+        el.style.display     = visible ? "" : "none";
         return;
       }
 
@@ -283,6 +429,7 @@ export default function NairobiMap() {
         "cursor:pointer",
         "transition:background 0.3s,border-color 0.3s,box-shadow 0.3s,transform 0.3s",
       ].join(";");
+      el.style.display = visible ? "" : "none";
 
       el.addEventListener("mouseenter", () => {
         const typeIcon: Record<string, string> = {
@@ -318,11 +465,10 @@ export default function NairobiMap() {
 
       markersRef.current[order.id] = marker;
     });
-  }, [orders, clusters, deliveredOrderIds, mapReady, openDrawer, drivers, showPopup]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderIds, deliveredCount, clusterKeys, mapReady, openDrawer, showPopup, visibility.orders]);
 
   // ── Cluster circles ───────────────────────────────────────────────────────
-  // BUG FIX: added isValidCoord guard — a cluster with bad centroid would
-  // render a halo at [0,0], causing a visible flash at the ocean.
   useEffect(() => {
     const m = map.current;
     if (!m || !mapReady) return;
@@ -332,20 +478,18 @@ export default function NairobiMap() {
     src.setData({
       type: "FeatureCollection",
       features: Object.values(clusters)
-        .filter((c) => isValidCoord(c.centroid_lat, c.centroid_lon)) // ← GUARD
+        .filter((c) => isValidCoord(c.centroid_lat, c.centroid_lon))
         .map((c) => ({
           type: "Feature" as const,
           geometry: { type: "Point" as const, coordinates: [c.centroid_lon, c.centroid_lat] },
           properties: { id: c.id, color: c.color, label: c.zone_label },
         })),
     });
-  }, [clusters, mapReady]);
+  }, [clusterKeys, mapReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Route lines ───────────────────────────────────────────────────────────
-  // BUG FIX: added isValidLineString guard so routes with empty/zeroed
-  // geojson coordinates (OSRM fallback placeholder) are not rendered.
-  // The street_network geojson from OSRM follows actual Nairobi roads.
-  // Euclidean/haversine geojson are straight lines — both correct by design.
+  const routeCount = Object.keys(routes).length;
+
   useEffect(() => {
     const m = map.current;
     if (!m || !mapReady) return;
@@ -353,7 +497,7 @@ export default function NairobiMap() {
     if (!src) return;
 
     const features = Object.values(routes)
-      .filter((r) => isValidLineString(r.geojson)) // ← GUARD replaces old length check
+      .filter((r) => isValidLineString(r.geojson))
       .map((r) => ({
         ...r.geojson!,
         properties: {
@@ -365,11 +509,13 @@ export default function NairobiMap() {
       }));
 
     src.setData({ type: "FeatureCollection", features });
-  }, [routes, isCompleted, mapReady]);
+  }, [routeCount, isCompleted, mapReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Trail lines ───────────────────────────────────────────────────────────
-  // BUG FIX: added coordinate guard on the leading dot — if the last trail
-  // point is [0,0] (brief intermediate state) we skip the dot.
+  const trailSignature = Object.entries(driverTrails)
+    .map(([id, t]) => `${id}:${t.coordinates.length}:${t.isActive}`)
+    .join("|");
+
   useEffect(() => {
     const m = map.current;
     if (!m || !mapReady) return;
@@ -382,7 +528,6 @@ export default function NairobiMap() {
     Object.values(driverTrails).forEach((trail) => {
       if (trail.coordinates.length < 2) return;
 
-      // Filter out any [0,0] stray points from the trail history
       const cleanCoords = trail.coordinates.filter(
         ([lon, lat]) => isValidCoord(lat, lon)
       );
@@ -400,7 +545,6 @@ export default function NairobiMap() {
 
       if (trail.isActive && cleanCoords.length > 0) {
         const tip = cleanCoords[cleanCoords.length - 1];
-        // ← GUARD: only render the leading dot if the tip is valid
         if (isValidCoord(tip[1], tip[0])) {
           dotFeatures.push({
             type: "Feature",
@@ -415,21 +559,23 @@ export default function NairobiMap() {
       type: "FeatureCollection",
       features: [...lineFeatures, ...dotFeatures],
     });
-  }, [driverTrails, mapReady]);
+  }, [trailSignature, mapReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Driver markers (with hover popup) ────────────────────────────────────
-  // BUG FIX: added isValidCoord guard; also skip setLngLat if coord unchanged
-  // to avoid unnecessary DOM thrashing that causes visual jitter.
+  // ── Driver markers ────────────────────────────────────────────────────────
+  const positionSignature = Object.entries(driverPositions)
+    .map(([id, p]) => `${id}:${p.lat.toFixed(5)},${p.lon.toFixed(5)}`)
+    .join("|");
+
   useEffect(() => {
     const m = map.current;
     if (!m || !mapReady) return;
 
     Object.entries(driverPositions).forEach(([id, pos]) => {
-      // ← GUARD: skip bad coordinates
       if (!isValidCoord(pos.lat, pos.lon)) return;
 
       const color = driverTrails[id]?.color ?? "#00ccff";
       const driver = drivers[id];
+      const visible = visibility.drivers;
 
       let marker = driverMarkersRef.current[id];
       if (!marker) {
@@ -438,6 +584,7 @@ export default function NairobiMap() {
         el.innerHTML = "🛵";
         el.style.borderColor = color;
         el.style.boxShadow   = `0 0 14px ${color}90`;
+        el.style.display     = visible ? "" : "none";
 
         el.addEventListener("mouseenter", () => {
           const driverName = pos.driverName || driver?.name || "Driver";
@@ -475,11 +622,12 @@ export default function NairobiMap() {
           .addTo(m);
         driverMarkersRef.current[id] = marker;
       } else {
-        // Only update position — avoids full DOM recreation that causes flicker
         marker.setLngLat([pos.lon, pos.lat]);
+        marker.getElement().style.display = visible ? "" : "none";
       }
     });
-  }, [driverPositions, driverTrails, drivers, mapReady, showPopup]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionSignature, mapReady, showPopup, visibility.drivers]);
 
   // ── On completion: dim & park drivers ────────────────────────────────────
   useEffect(() => {
@@ -510,8 +658,12 @@ export default function NairobiMap() {
         }}
       />
 
+      {/* Toggle controls — centered top bar */}
+      {mapReady && (
+        <MapToggleControls visibility={visibility} onToggle={handleToggle} />
+      )}
+
       <CornerDecoration position="top-left" />
-      <CornerDecoration position="top-right" />
       <CornerDecoration position="bottom-left" />
 
       {isCompleted && Object.keys(routes).length > 0 && (
@@ -521,17 +673,17 @@ export default function NairobiMap() {
   );
 }
 
-// ── Completion legend — BUG FIX: shows real delivery counts ──────────────────
-// ROOT CAUSE: `driver.deliveries_completed` was being read at legend render
-// time from the store snapshot, but routes have multiple entries per driver
-// (one per cluster). We now build a proper aggregation map from all routes
-// and read driver data fresh from the store at render time.
+// ── Completion legend — FIXED deduplication ───────────────────────────────────
+// Root cause of "#2" names: routes store `driver_name` from ROUTE_COMPUTED events
+// which may be stale/empty on first emit. We now use `drivers` store as the
+// ONLY source of truth for names, and aggregate by driver_id to get one entry
+// per physical driver (not per route/cluster).
 function CompletionRouteLegend() {
   const routes  = useSimulationStore((s) => s.routes);
   const drivers = useSimulationStore((s) => s.drivers);
 
-  // Build a map of driver_id → { name, color, totalKm, deliveries }
-  // This aggregates across all routes for the same driver.
+  // Aggregate all routes by driver_id → single summary per driver
+  // Key fix: use drivers[driver_id].name as the canonical name, not route.driver_name
   const driverSummary: Record<string, {
     name: string;
     color: string;
@@ -541,31 +693,42 @@ function CompletionRouteLegend() {
   }> = {};
 
   Object.values(routes).forEach((r) => {
-    const driver = drivers[r.driver_id];
     if (!driverSummary[r.driver_id]) {
+      // Canonical name comes from the drivers store — always
+      const driver = drivers[r.driver_id];
+      // NEVER fall back to r.driver_name — it causes "#2" duplication
+      const name = driver?.name || `Driver ${r.driver_id.slice(-4)}`;
+
       driverSummary[r.driver_id] = {
-        name:       driver?.name ?? r.driver_name ?? "Driver",
+        name,
         color:      r.color,
         totalKm:    0,
-        // ← FIX: read deliveries_completed directly from the drivers store,
-        //   not from the route object (which has no delivery count).
-        //   The store is updated by DELIVERY_COMPLETED events in useSimulation.
         deliveries: driver?.deliveries_completed ?? 0,
         driver_id:  r.driver_id,
       };
     }
+
+    // Accumulate distance across all this driver's routes (clusters)
     driverSummary[r.driver_id].totalKm += r.total_distance_km;
-    // Refresh deliveries in case the driver entry arrived after the first route
+
+    // Refresh deliveries and name from the live drivers store
+    const driver = drivers[r.driver_id];
     if (driver) {
       driverSummary[r.driver_id].deliveries = driver.deliveries_completed;
+      driverSummary[r.driver_id].name = driver.name || driverSummary[r.driver_id].name;
     }
   });
 
-  const summaryList = Object.values(driverSummary).slice(0, 10);
+  // Sort by driver name for stable ordering
+  const summaryList = Object.values(driverSummary)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, 10);
+
+  if (summaryList.length === 0) return null;
 
   return (
     <div
-      className="absolute top-4 right-4 pointer-events-none"
+      className="absolute top-16 right-4 pointer-events-none"
       style={{ zIndex: 10 }}
     >
       <div
@@ -614,7 +777,7 @@ function CompletionRouteLegend() {
           borderTop: "1px solid #1e3a5f",
           fontFamily: "var(--font-mono)", fontSize: 8, color: "#3a6080",
         }}>
-          {summaryList.length} drivers · optimised
+          {summaryList.length} driver{summaryList.length !== 1 ? "s" : ""} · optimised
         </div>
       </div>
     </div>
@@ -624,7 +787,6 @@ function CompletionRouteLegend() {
 function CornerDecoration({ position }: { position: string }) {
   const posClass = ({
     "top-left":    "top-4 left-4",
-    "top-right":   "top-4 right-4",
     "bottom-left": "bottom-4 left-4",
   } as Record<string, string>)[position] ?? "top-4 left-4";
 
@@ -632,9 +794,8 @@ function CornerDecoration({ position }: { position: string }) {
     <div className={`absolute ${posClass} pointer-events-none`} style={{ zIndex: 2 }}>
       <div style={{
         width: 20, height: 20,
-        borderTop:   "2px solid rgba(0,204,255,0.4)",
-        borderLeft:  position.includes("right") ? "none" : "2px solid rgba(0,204,255,0.4)",
-        borderRight: position.includes("right") ? "2px solid rgba(0,204,255,0.4)" : "none",
+        borderTop:  "2px solid rgba(0,204,255,0.4)",
+        borderLeft: "2px solid rgba(0,204,255,0.4)",
       }} />
     </div>
   );
