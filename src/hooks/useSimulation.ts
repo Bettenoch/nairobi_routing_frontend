@@ -1,4 +1,8 @@
-//src/hooks/useSimulation.ts
+// src/hooks/useSimulation.ts — FIXED
+// Fix 1: DELIVERY_COMPLETED increments deliveries_completed using Math.max to
+//         guarantee a numeric base (never NaN from undefined+1).
+// Fix 2: DRIVER_ASSIGNED initialises deliveries_completed: 0 if missing,
+//         so the field always exists before any increment.
 
 import { useCallback, useEffect, useRef } from 'react'
 import { SimulationWebSocket } from '@/services/websocket'
@@ -9,39 +13,16 @@ import { useUIStore } from '@/store/uiStore'
 import type { SimulationConfig, SimulationEvent } from '@/types'
 
 // ── Unique color palette per driver ──────────────────────────────────────────
-// Each color is visually distinct — no two adjacent entries look similar.
-// This palette has 10 entries matching the max driver count (8) + buffer.
 const DRIVER_PALETTE = [
-  "#00ccff", // cyan
-  "#FF6B35", // orange
-  "#7fff00", // lime
-  "#DDA0DD", // plum
-  "#4ECDC4", // teal
-  "#ffaa00", // amber
-  "#ff4d6d", // coral
-  "#85C1E9", // sky blue
-  "#F7DC6F", // gold
-  "#BB8FCE", // lavender
+  "#00ccff", "#FF6B35", "#7fff00", "#DDA0DD", "#4ECDC4",
+  "#ffaa00", "#ff4d6d", "#85C1E9", "#F7DC6F", "#BB8FCE",
 ]
-
-// ── Per-session driver color state ────────────────────────────────────────────
-// These are module-level (not React state) because they need to persist across
-// re-renders but be reset on each new simulation.
-//
-// FIX for "same color" bug:
-//   Root cause — if `getOrAssignDriverColor` was called with the SAME driver_id
-//   twice (once in ROUTE_COMPUTED, once in DRIVER_ASSIGNED), it correctly
-//   returned the same color. But if the color map was stale from a previous run
-//   (not fully cleared), drivers got palette[0] each time.
-//   Solution: clear map + index together in clearDriverColors(), and never
-//   call clearDriverColors() partially.
 
 const driverColorMap: Record<string, string> = {}
 let driverColorIndex = 0
 
 function getOrAssignDriverColor(driverId: string): string {
   if (driverColorMap[driverId]) return driverColorMap[driverId]
-  // FIX: use modulo so we never go out of bounds even with 10+ drivers
   const color = DRIVER_PALETTE[driverColorIndex % DRIVER_PALETTE.length]
   driverColorMap[driverId] = color
   driverColorIndex++
@@ -49,7 +30,6 @@ function getOrAssignDriverColor(driverId: string): string {
 }
 
 function clearDriverColors() {
-  // Clear all entries + reset index atomically
   Object.keys(driverColorMap).forEach((k) => delete driverColorMap[k])
   driverColorIndex = 0
 }
@@ -60,12 +40,14 @@ export function useSimulation() {
   const {
     setSessionId, setWsConnected, setStatus,
     upsertOrder, upsertDriver, upsertCluster, upsertRoute,
+    upsertRestaurant, setDeliveryRecords,
     setMetrics, setCompletionSummary, config, reset,
   } = useSimulationStore()
 
   const {
     updateDriverPosition, markOrderDelivered, resetMap,
     initDriverTrail, appendTrailPoint, finalizeDriverTrail, setActiveDriver,
+    addRestaurantMarker,
   } = useMapStore()
 
   const { setShowCompletion } = useUIStore()
@@ -77,18 +59,41 @@ export function useSimulation() {
         setStatus(event.data.status as never, event.data.message)
         break
 
+      case 'RESTAURANT_CREATED':
+        upsertRestaurant(event.data.restaurant_id, {
+          id:           event.data.restaurant_id,
+          name:         event.data.name,
+          lat:          event.data.lat,
+          lon:          event.data.lon,
+          zone:         event.data.zone,
+          cuisine_type: event.data.cuisine_type,
+        })
+        addRestaurantMarker(event.data.restaurant_id, {
+          lat:  event.data.lat,
+          lon:  event.data.lon,
+          name: event.data.name,
+          zone: event.data.zone,
+        })
+        break
+
       case 'ORDER_CREATED':
         upsertOrder(event.data.order_id, {
-          id:                      event.data.order_id,
-          lat:                     event.data.lat,
-          lon:                     event.data.lon,
-          zone:                    event.data.zone,
-          order_type:              event.data.order_type,
-          status:                  'pending',
-          cluster_id:              null,
-          driver_id:               null,
-          estimated_prep_minutes:  event.data.estimated_prep_minutes,
-          restaurant_name:         event.data.restaurant_name ?? '',
+          id:                     event.data.order_id,
+          lat:                    event.data.lat,
+          lon:                    event.data.lon,
+          zone:                   event.data.zone,
+          order_type:             event.data.order_type,
+          status:                 'pending',
+          cluster_id:             null,
+          driver_id:              null,
+          estimated_prep_minutes: event.data.estimated_prep_minutes,
+          restaurant_name:        event.data.restaurant_name ?? '',
+          restaurant_id:          event.data.restaurant_id ?? null,
+          restaurant_lat:         event.data.restaurant_lat ?? null,
+          restaurant_lon:         event.data.restaurant_lon ?? null,
+          restaurant_zone:        event.data.restaurant_zone ?? '',
+          ordered_at:             event.data.ordered_at ?? null,
+          delivered_at:           null,
         })
         break
 
@@ -116,16 +121,11 @@ export function useSimulation() {
         break
 
       case 'ROUTE_COMPUTED': {
-        // FIX: color is always keyed by driver_id, never by route_id.
-        // This guarantees a driver with 3 clusters has 3 routes all the same color.
         const driverColor = getOrAssignDriverColor(event.data.driver_id)
-
         upsertRoute(event.data.route_id, {
           id:                         event.data.route_id,
           cluster_id:                 event.data.cluster_id,
           driver_id:                  event.data.driver_id,
-          // FIX: do NOT store driver_name from the route event — it may be stale.
-          // The legend reads name from the drivers store instead.
           driver_name:                event.data.driver_name ?? '',
           method:                     event.data.method as never,
           geojson:                    event.data.geojson,
@@ -135,24 +135,20 @@ export function useSimulation() {
           color: driverColor,
         })
         upsertCluster(event.data.cluster_id, { driver_id: event.data.driver_id })
-        // initDriverTrail is idempotent — safe to call multiple times for same driver
         initDriverTrail(event.data.driver_id, driverColor)
         break
       }
 
       case 'DRIVER_ASSIGNED':
-        // This is where the driver name is written to the drivers store.
-        // The legend reads from here — not from the route events.
+        // FIX: initialise deliveries_completed to 0 here so the field always
+        // exists as a number before any DELIVERY_COMPLETED increments it.
         upsertDriver(event.data.driver_id, {
-          status:     'assigned',
-          cluster_id: event.data.cluster_id,
-          name:       event.data.driver_name,
+          status:               'assigned',
+          cluster_id:           event.data.cluster_id,
+          name:                 event.data.driver_name,
+          deliveries_completed: 0,
         })
         {
-          // FIX: get the color from the map (already assigned in ROUTE_COMPUTED).
-          // If DRIVER_ASSIGNED fires before ROUTE_COMPUTED (unlikely but possible),
-          // getOrAssignDriverColor will assign a new color; subsequent ROUTE_COMPUTED
-          // will then use it consistently.
           const color = getOrAssignDriverColor(event.data.driver_id)
           initDriverTrail(event.data.driver_id, color)
           setActiveDriver(event.data.driver_id)
@@ -160,19 +156,16 @@ export function useSimulation() {
         break
 
       case 'DRIVER_MOVED': {
-        const { driver_id, driver_name, lat, lon, progress_pct, current_order_id } = event.data
-
-        // FIX: reject [0,0] and non-finite coordinates before updating any state
-        if (
-          !Number.isFinite(lat) || !Number.isFinite(lon) ||
-          (lat === 0 && lon === 0)
-        ) break
+        const { driver_id, driver_name, lat, lon, progress_pct, current_order_id, phase, restaurant_name } = event.data
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) break
 
         updateDriverPosition(driver_id, {
           lat, lon,
           progress:       progress_pct,
           currentOrderId: current_order_id,
           driverName:     driver_name ?? '',
+          phase:          phase ?? 'delivery',
+          restaurantName: restaurant_name ?? '',
         })
         upsertDriver(driver_id, { lat, lon, status: 'en_route' })
         appendTrailPoint(driver_id, lon, lat)
@@ -181,26 +174,32 @@ export function useSimulation() {
 
       case 'DELIVERY_COMPLETED': {
         markOrderDelivered(event.data.order_id)
-        upsertOrder(event.data.order_id, { status: 'delivered' })
-
-        // Increment the delivery count on the driver in the store.
-        // This is the counter read by the legend ("X drops").
+        upsertOrder(event.data.order_id, {
+          status:       'delivered',
+          delivered_at: event.data.delivered_at ?? null,
+        })
+        // FIX: Read current count from store at event time, default to 0 if
+        // undefined (prevents NaN). Use Math.max to ensure we never go below 0.
         const currentDriver = useSimulationStore.getState().drivers[event.data.driver_id]
+        const currentCount = typeof currentDriver?.deliveries_completed === 'number'
+          ? currentDriver.deliveries_completed
+          : 0
         upsertDriver(event.data.driver_id, {
-          deliveries_completed: (currentDriver?.deliveries_completed ?? 0) + 1,
+          deliveries_completed: currentCount + 1,
         })
         break
       }
 
+      case 'DELIVERY_TABLE':
+        setDeliveryRecords(event.data.records)
+        break
+
       case 'METRICS_UPDATED': {
-        // Compute savings_percentage client-side because the backend sends it
-        // as a @property (not a real field), so it arrives as 0 in the JSON.
         const m = event.data
         const savings_percentage =
           m.naive_distance_km > 0
             ? Math.round(((m.naive_distance_km - m.optimised_distance_km) / m.naive_distance_km) * 1000) / 10
             : 0
-
         setMetrics({ ...m, savings_percentage })
         break
       }
@@ -225,9 +224,10 @@ export function useSimulation() {
     }
   }, [
     setStatus, upsertOrder, upsertDriver, upsertCluster, upsertRoute,
+    upsertRestaurant, setDeliveryRecords,
     setMetrics, setCompletionSummary, updateDriverPosition, markOrderDelivered,
     setShowCompletion, initDriverTrail, appendTrailPoint, finalizeDriverTrail,
-    setActiveDriver,
+    setActiveDriver, addRestaurantMarker,
   ])
 
   const startSimulation = useCallback(async (overrides?: Partial<SimulationConfig>) => {
@@ -235,7 +235,6 @@ export function useSimulation() {
     reset()
     resetMap()
     setShowCompletion(false)
-    // FIX: always clear colors at the very start of a new simulation run
     clearDriverColors()
 
     const cfg: SimulationConfig = { ...config, ...overrides }
@@ -243,7 +242,6 @@ export function useSimulation() {
     try {
       const res = await api.startSimulation(cfg)
       setSessionId(res.session_id)
-
       const ws = new SimulationWebSocket(res.session_id, handleEvent, setWsConnected)
       wsRef.current = ws
       ws.connect()
