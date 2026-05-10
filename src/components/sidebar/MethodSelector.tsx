@@ -1,4 +1,4 @@
-//src/components/sidebar/MethodSelector.tsx
+// src/components/sidebar/MethodSelector.tsx
 import { Info } from "lucide-react";
 import { useSimulationStore } from "@/store/simulationStore";
 import { useUIStore } from "@/store/uiStore";
@@ -87,8 +87,6 @@ export default function MethodSelector({ disabled }: Props) {
                   {m.description}
                 </div>
               </div>
-
-              {/* Active indicator */}
               {active && (
                 <div
                   style={{
@@ -101,8 +99,6 @@ export default function MethodSelector({ disabled }: Props) {
                   }}
                 />
               )}
-
-              {/* Info button */}
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -129,58 +125,70 @@ export default function MethodSelector({ disabled }: Props) {
 
       {/* Config sliders */}
       <div className="mt-4 space-y-3">
-        <ConfigSlider
+        <LiveSlider
+          label="Speed"
+          storeKey="simulation_speed"
+          min={0.5}
+          max={8}
+          step={0.5}
+          disabled={disabled}
+          color="#DDA0DD"
+          format={(v) => `${v}×`}
+        />
+        <LiveSlider
           label="Orders"
-          value={useSimulationStore.getState().config.order_count}
+          storeKey="order_count"
           min={5}
           max={60}
           step={5}
           disabled={disabled}
-          onChange={(v) =>
-            useSimulationStore.getState().setConfig({ order_count: v })
-          }
           color="#00ccff"
         />
-        <ConfigSlider
+        <LiveSlider
           label="Drivers"
-          value={useSimulationStore.getState().config.driver_count}
+          storeKey="driver_count"
           min={1}
           max={8}
           step={1}
           disabled={disabled}
-          onChange={(v) =>
-            useSimulationStore.getState().setConfig({ driver_count: v })
-          }
           color="#7fff00"
+        />
+        <LiveSlider
+          label="Restaurants"
+          storeKey="restaurant_count"
+          min={1}
+          max={10}
+          step={1}
+          disabled={disabled}
+          color="#ffaa00"
         />
       </div>
     </div>
   );
 }
 
-function ConfigSlider({
+// ── Reactive slider that reads from store ─────────────────────────────────────
+function LiveSlider({
   label,
-  value,
+  storeKey,
   min,
   max,
   step,
   disabled,
-  onChange,
   color,
+  format = (v: number) => String(v),
 }: {
   label: string;
-  value: number;
+  storeKey: keyof ReturnType<typeof useSimulationStore.getState>["config"];
   min: number;
   max: number;
   step: number;
   disabled?: boolean;
-  onChange: (v: number) => void;
   color: string;
+  format?: (v: number) => string;
 }) {
-  // Re-subscribe so slider reflects store changes
-  const storeConfig = useSimulationStore((s) => s.config);
-  const currentValue =
-    label === "Orders" ? storeConfig.order_count : storeConfig.driver_count;
+  const value = useSimulationStore((s) => s.config[storeKey] as number);
+  const setConfig = useSimulationStore((s) => s.setConfig);
 
   return (
     <div>
@@ -203,7 +211,7 @@ function ConfigSlider({
             color,
           }}
         >
-          {currentValue}
+          {format(value)}
         </span>
       </div>
       <input
@@ -211,9 +219,9 @@ function ConfigSlider({
         min={min}
         max={max}
         step={step}
-        value={currentValue}
+        value={value}
         disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => setConfig({ [storeKey]: Number(e.target.value) })}
         style={{
           width: "100%",
           accentColor: color,
