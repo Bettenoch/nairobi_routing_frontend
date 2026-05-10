@@ -1,29 +1,27 @@
-//src/store/simulationStore.ts
+// src/store/simulationStore.ts — UPDATED
 
 import { create } from 'zustand'
 import type {
   Order, Driver, Cluster, Route, SimulationMetrics,
   SimulationConfig, SimulationStatus, RoutingMethod,
+  Restaurant, DeliveryRecord,
 } from '@/types'
 
 interface SimulationState {
-  // Session
   sessionId: string | null
   wsConnected: boolean
   status: SimulationStatus | null
   statusMessage: string
 
-  // Data
   orders: Record<string, Order>
   drivers: Record<string, Driver>
   clusters: Record<string, Cluster>
   routes: Record<string, Route>
+  restaurants: Record<string, Restaurant>   // ← NEW
+  deliveryRecords: DeliveryRecord[]          // ← NEW
   metrics: SimulationMetrics
-
-  // Config
   config: SimulationConfig
 
-  // Summary (shown after completion)
   completionSummary: {
     total_deliveries: number
     total_distance_km: number
@@ -31,7 +29,6 @@ interface SimulationState {
     duration_seconds: number
   } | null
 
-  // Actions
   setSessionId: (id: string) => void
   setWsConnected: (v: boolean) => void
   setStatus: (s: SimulationStatus, msg: string) => void
@@ -39,6 +36,9 @@ interface SimulationState {
   upsertDriver: (id: string, data: Partial<Driver>) => void
   upsertCluster: (id: string, data: Partial<Cluster>) => void
   upsertRoute: (id: string, data: Partial<Route>) => void
+  upsertRestaurant: (id: string, data: Restaurant) => void  // ← NEW
+  addDeliveryRecord: (r: DeliveryRecord) => void            // ← NEW
+  setDeliveryRecords: (records: DeliveryRecord[]) => void   // ← NEW
   setMetrics: (m: SimulationMetrics) => void
   setConfig: (c: Partial<SimulationConfig>) => void
   setCompletionSummary: (s: SimulationState['completionSummary']) => void
@@ -63,8 +63,10 @@ const DEFAULT_METRICS: SimulationMetrics = {
 const DEFAULT_CONFIG: SimulationConfig = {
   order_count: 30,
   driver_count: 5,
+  restaurant_count: 5,
   routing_method: 'street_network',
   scenario_label: 'UberEats Nairobi — Friday 7PM',
+  simulation_speed: 1.0,
 }
 
 export const useSimulationStore = create<SimulationState>((set) => ({
@@ -76,6 +78,8 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   drivers: {},
   clusters: {},
   routes: {},
+  restaurants: {},       // ← NEW
+  deliveryRecords: [],   // ← NEW
   metrics: { ...DEFAULT_METRICS },
   config: { ...DEFAULT_CONFIG },
   completionSummary: null,
@@ -104,6 +108,18 @@ export const useSimulationStore = create<SimulationState>((set) => ({
       routes: { ...state.routes, [id]: { ...state.routes[id], ...data } as Route },
     })),
 
+  upsertRestaurant: (id, data) =>
+    set((state) => ({
+      restaurants: { ...state.restaurants, [id]: data },
+    })),
+
+  addDeliveryRecord: (r) =>
+    set((state) => ({
+      deliveryRecords: [...state.deliveryRecords, r],
+    })),
+
+  setDeliveryRecords: (records) => set({ deliveryRecords: records }),
+
   setMetrics: (m) => set({ metrics: m }),
 
   setConfig: (c) =>
@@ -121,6 +137,8 @@ export const useSimulationStore = create<SimulationState>((set) => ({
       drivers: {},
       clusters: {},
       routes: {},
+      restaurants: {},
+      deliveryRecords: [],
       metrics: { ...DEFAULT_METRICS },
       completionSummary: null,
     }),
