@@ -1,5 +1,4 @@
-//src/types/index.ts
-// ─── Enums ────────────────────────────────────────────────────────────────────
+// src/types/index.ts — UPDATED
 
 export type RoutingMethod = 'euclidean' | 'haversine' | 'street_network'
 export type OrderStatus = 'pending' | 'clustered' | 'assigned' | 'in_transit' | 'delivered'
@@ -9,6 +8,15 @@ export type SimulationStatus =
   | 'routing' | 'animating' | 'completed' | 'failed'
 
 // ─── Domain models ────────────────────────────────────────────────────────────
+
+export interface Restaurant {
+  id: string
+  name: string
+  lat: number
+  lon: number
+  zone: string
+  cuisine_type: string
+}
 
 export interface Order {
   id: string
@@ -20,7 +28,13 @@ export interface Order {
   cluster_id: string | null
   driver_id: string | null
   estimated_prep_minutes: number
-  restaurant_name: string   // ← NEW
+  restaurant_name: string
+  restaurant_id: string | null
+  restaurant_lat: number | null
+  restaurant_lon: number | null
+  restaurant_zone: string
+  ordered_at: string | null
+  delivered_at: string | null
 }
 
 export interface Driver {
@@ -51,7 +65,7 @@ export interface Route {
   id: string
   cluster_id: string
   driver_id: string
-  driver_name: string   // ← NEW
+  driver_name: string
   method: RoutingMethod
   geojson: GeoJSONFeature | null
   total_distance_km: number
@@ -87,25 +101,52 @@ export interface SimulationMetrics {
 export interface SimulationConfig {
   order_count: number
   driver_count: number
+  restaurant_count: number   // ← NEW
   routing_method: RoutingMethod
   scenario_label: string
+  simulation_speed: number
+}
+
+export interface DeliveryRecord {
+  order_id: string
+  driver_name: string
+  restaurant_name: string
+  restaurant_zone: string
+  customer_zone: string
+  ordered_at: string | null
+  delivered_at: string | null
+  duration_minutes: number | null
+  distance_km: number
+  algorithm: string
+  status: string
 }
 
 // ─── WebSocket events ─────────────────────────────────────────────────────────
 
 export type SimulationEvent =
-  | { event: 'ORDER_CREATED';         session_id: string; data: OrderCreatedData }
-  | { event: 'ORDER_STATUS_CHANGED';  session_id: string; data: OrderStatusChangedData }
-  | { event: 'CLUSTER_FORMED';        session_id: string; data: ClusterFormedData }
-  | { event: 'ROUTE_COMPUTED';        session_id: string; data: RouteComputedData }
-  | { event: 'DRIVER_ASSIGNED';       session_id: string; data: DriverAssignedData }
-  | { event: 'DRIVER_MOVED';          session_id: string; data: DriverMovedData }
-  | { event: 'DELIVERY_COMPLETED';    session_id: string; data: DeliveryCompletedData }
-  | { event: 'METRICS_UPDATED';       session_id: string; data: SimulationMetrics }
-  | { event: 'SIMULATION_STATUS';     session_id: string; data: SimulationStatusData }
-  | { event: 'SIMULATION_COMPLETED';  session_id: string; data: SimulationCompletedData }
-  | { event: 'ERROR';                 session_id: string; data: ErrorData }
+  | { event: 'RESTAURANT_CREATED';   session_id: string; data: RestaurantCreatedData }
+  | { event: 'ORDER_CREATED';        session_id: string; data: OrderCreatedData }
+  | { event: 'ORDER_STATUS_CHANGED'; session_id: string; data: OrderStatusChangedData }
+  | { event: 'CLUSTER_FORMED';       session_id: string; data: ClusterFormedData }
+  | { event: 'ROUTE_COMPUTED';       session_id: string; data: RouteComputedData }
+  | { event: 'DRIVER_ASSIGNED';      session_id: string; data: DriverAssignedData }
+  | { event: 'DRIVER_MOVED';         session_id: string; data: DriverMovedData }
+  | { event: 'DELIVERY_COMPLETED';   session_id: string; data: DeliveryCompletedData }
+  | { event: 'DELIVERY_TABLE';       session_id: string; data: DeliveryTableData }
+  | { event: 'METRICS_UPDATED';      session_id: string; data: SimulationMetrics }
+  | { event: 'SIMULATION_STATUS';    session_id: string; data: SimulationStatusData }
+  | { event: 'SIMULATION_COMPLETED'; session_id: string; data: SimulationCompletedData }
+  | { event: 'ERROR';                session_id: string; data: ErrorData }
   | { event: 'PONG' }
+
+export interface RestaurantCreatedData {
+  restaurant_id: string
+  name: string
+  lat: number
+  lon: number
+  zone: string
+  cuisine_type: string
+}
 
 export interface OrderCreatedData {
   order_id: string
@@ -114,7 +155,12 @@ export interface OrderCreatedData {
   zone: string
   order_type: string
   estimated_prep_minutes: number
-  restaurant_name: string   // ← NEW
+  restaurant_name: string
+  restaurant_id: string | null
+  restaurant_lat: number | null
+  restaurant_lon: number | null
+  restaurant_zone: string
+  ordered_at: string | null
 }
 
 export interface OrderStatusChangedData {
@@ -137,7 +183,7 @@ export interface RouteComputedData {
   route_id: string
   cluster_id: string
   driver_id: string
-  driver_name: string   // ← NEW
+  driver_name: string
   method: string
   geojson: GeoJSONFeature
   total_distance_km: number
@@ -155,17 +201,32 @@ export interface DriverAssignedData {
 
 export interface DriverMovedData {
   driver_id: string
-  driver_name: string   // ← NEW
+  driver_name: string
   lat: number
   lon: number
   progress_pct: number
   current_order_id: string | null
+  phase: string
+  restaurant_name: string
 }
 
 export interface DeliveryCompletedData {
   order_id: string
   driver_id: string
+  driver_name: string
+  restaurant_name: string
+  restaurant_zone: string
+  customer_zone: string
   time_taken_minutes: number
+  distance_km: number
+  ordered_at: string | null
+  delivered_at: string | null
+  algorithm: string
+}
+
+export interface DeliveryTableData {
+  records: DeliveryRecord[]
+  total_count: number
 }
 
 export interface SimulationStatusData {
@@ -193,6 +254,7 @@ export interface StartSimulationResponse {
   ws_url: string
   order_count: number
   driver_count: number
+  restaurant_count: number
   routing_method: string
   message: string
 }
