@@ -1,4 +1,4 @@
-// src/store/simulationStore.ts — UPDATED
+// src/store/simulationStore.ts 
 
 import { create } from 'zustand'
 import type {
@@ -66,7 +66,7 @@ const DEFAULT_CONFIG: SimulationConfig = {
   restaurant_count: 5,
   routing_method: 'street_network',
   scenario_label: 'UberEats Nairobi — Friday 7PM',
-  simulation_speed: 1.0,
+  simulation_speed: 5.0,
 }
 
 export const useSimulationStore = create<SimulationState>((set) => ({
