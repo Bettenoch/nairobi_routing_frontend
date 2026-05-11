@@ -89,9 +89,18 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   setStatus: (s, msg) => set({ status: s, statusMessage: msg }),
 
   upsertOrder: (id, data) =>
-    set((state) => ({
-      orders: { ...state.orders, [id]: { ...state.orders[id], ...data } as Order },
-    })),
+    set((state) => {
+      const existing = state.orders[id] ?? {}
+      const merged = { ...existing, ...data } as Order
+
+      // Guard: never allow lat/lon to become 0 or undefined once set
+      if (existing.lat && existing.lon) {
+        if (!data.lat || data.lat === 0) merged.lat = existing.lat
+        if (!data.lon || data.lon === 0) merged.lon = existing.lon
+      }
+
+      return { orders: { ...state.orders, [id]: merged } }
+    }),
 
   upsertDriver: (id, data) =>
     set((state) => ({
