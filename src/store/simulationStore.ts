@@ -17,8 +17,8 @@ interface SimulationState {
   drivers: Record<string, Driver>
   clusters: Record<string, Cluster>
   routes: Record<string, Route>
-  restaurants: Record<string, Restaurant>   // ← NEW
-  deliveryRecords: DeliveryRecord[]          // ← NEW
+  restaurants: Record<string, Restaurant>   
+  deliveryRecords: DeliveryRecord[]          
   metrics: SimulationMetrics
   config: SimulationConfig
 
@@ -36,9 +36,9 @@ interface SimulationState {
   upsertDriver: (id: string, data: Partial<Driver>) => void
   upsertCluster: (id: string, data: Partial<Cluster>) => void
   upsertRoute: (id: string, data: Partial<Route>) => void
-  upsertRestaurant: (id: string, data: Restaurant) => void  // ← NEW
-  addDeliveryRecord: (r: DeliveryRecord) => void            // ← NEW
-  setDeliveryRecords: (records: DeliveryRecord[]) => void   // ← NEW
+  upsertRestaurant: (id: string, data: Restaurant) => void  
+  addDeliveryRecord: (r: DeliveryRecord) => void           
+  setDeliveryRecords: (records: DeliveryRecord[]) => void  
   setMetrics: (m: SimulationMetrics) => void
   setConfig: (c: Partial<SimulationConfig>) => void
   setCompletionSummary: (s: SimulationState['completionSummary']) => void
@@ -78,8 +78,8 @@ export const useSimulationStore = create<SimulationState>((set) => ({
   drivers: {},
   clusters: {},
   routes: {},
-  restaurants: {},       // ← NEW
-  deliveryRecords: [],   // ← NEW
+  restaurants: {},      
+  deliveryRecords: [],   
   metrics: { ...DEFAULT_METRICS },
   config: { ...DEFAULT_CONFIG },
   completionSummary: null,

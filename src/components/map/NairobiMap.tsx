@@ -535,8 +535,7 @@ useEffect(() => {
           const livePos = useMapStore.getState().driverPositions[id];
           const liveDriver = useSimulationStore.getState().drivers[id];
           const driverName = livePos?.driverName || liveDriver?.name || "Driver";
-          // FIX: deliveries_completed is now always a number (0+) thanks to
-          // DRIVER_ASSIGNED initialising it and DELIVERY_COMPLETED using safe math.
+
           const deliveries = typeof liveDriver?.deliveries_completed === 'number'
             ? liveDriver.deliveries_completed
             : 0;

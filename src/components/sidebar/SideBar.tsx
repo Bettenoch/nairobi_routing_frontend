@@ -1,7 +1,5 @@
 // src/components/sidebar/Sidebar.tsx — FIXED
-// Fix: sidebar collapse now uses CSS width transition instead of conditional render,
-// so the flex layout reflows smoothly and the ResizeObserver in NairobiMap
-// triggers map.resize() to fill the full width — no black gap.
+
 
 import { useState } from 'react'
 import ScenarioHeader from './ScenarioHeader'
@@ -26,9 +24,7 @@ export default function Sidebar() {
   return (
     <aside
       style={{
-        // FIX: use CSS transition on width so the flex layout reflows
-        // smoothly — this triggers the ResizeObserver on the map container
-        // which calls map.resize(), filling the full width with no black gap.
+
         width: collapsed ? 52 : 320,
         minWidth: collapsed ? 52 : 320,
         transition: 'width 0.25s ease, min-width 0.25s ease',

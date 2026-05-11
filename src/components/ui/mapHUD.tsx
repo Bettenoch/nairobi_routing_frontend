@@ -1,8 +1,5 @@
-// src/components/ui/mapHUD.tsx — FIXED
-// Fix: Removed the bottom-left LEGEND block from here entirely.
-// The legend now lives exclusively in NairobiMap (MapLegend component)
-// where it's properly toggleable. Having it in both places caused the
-// double-legend the user reported.
+// src/components/ui/mapHUD.tsx 
+
 
 import { useSimulationStore } from '@/store/simulationStore'
 

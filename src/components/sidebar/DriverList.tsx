@@ -43,7 +43,7 @@ export default function DriverList() {
           const isActive = driver.status === "en_route";
 
           // Fallback to index if id is missing to suppress the React warning
-          // though using a stable ID is always preferred.
+
           const itemKey = driver.id || `driver-${index}`;
 
           return (

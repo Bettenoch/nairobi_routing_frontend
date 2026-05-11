@@ -1,4 +1,4 @@
-// src/store/mapStore.ts — UPDATED
+// src/store/mapStore.ts 
 
 import { create } from 'zustand'
 
