@@ -73,6 +73,12 @@ export function useSimulation() {
         break
 
       case 'ORDER_CREATED':
+        // Guard: skip orders with invalid coordinates
+        if (!Number.isFinite(event.data.lat) || !Number.isFinite(event.data.lon) ||
+          (event.data.lat === 0 && event.data.lon === 0)) {
+          console.warn('[ws] ORDER_CREATED with invalid coords, skipping:', event.data.order_id)
+          break
+        }
         upsertOrder(event.data.order_id, {
           id: event.data.order_id,
           lat: event.data.lat,
@@ -244,17 +250,19 @@ export function useSimulation() {
 
     const cfg: SimulationConfig = { ...config, ...overrides }
 
+    // ① Get a session ID first — we need it to open the WS before the POST
+    // The backend /api/simulate returns the session_id immediately; we then
+    // connect the WS in the same tick so no events are missed.
     try {
       const res = await api.startSimulation(cfg)
       setSessionId(res.session_id)
 
-      // Safety net: give the POST response time to reach the client
-      // and the WS connection time to establish before backend fires events
-      await new Promise(resolve => setTimeout(resolve, 800))
-
+      // ② Open WS immediately — no artificial delay
       const ws = new SimulationWebSocket(res.session_id, handleEvent, setWsConnected)
       wsRef.current = ws
       ws.connect()
+
+      // ③ Remove the old 800ms await — it was the main culprit
     } catch (err) {
       console.error('[simulation] Failed to start:', err)
       setStatus('failed' as never, `Failed to start: ${(err as Error).message}`)
