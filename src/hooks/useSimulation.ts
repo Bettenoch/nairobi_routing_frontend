@@ -61,16 +61,16 @@ export function useSimulation() {
 
       case 'RESTAURANT_CREATED':
         upsertRestaurant(event.data.restaurant_id, {
-          id:           event.data.restaurant_id,
-          name:         event.data.name,
-          lat:          event.data.lat,
-          lon:          event.data.lon,
-          zone:         event.data.zone,
+          id: event.data.restaurant_id,
+          name: event.data.name,
+          lat: event.data.lat,
+          lon: event.data.lon,
+          zone: event.data.zone,
           cuisine_type: event.data.cuisine_type,
         })
         addRestaurantMarker(event.data.restaurant_id, {
-          lat:  event.data.lat,
-          lon:  event.data.lon,
+          lat: event.data.lat,
+          lon: event.data.lon,
           name: event.data.name,
           zone: event.data.zone,
         })
@@ -78,41 +78,41 @@ export function useSimulation() {
 
       case 'ORDER_CREATED':
         upsertOrder(event.data.order_id, {
-          id:                     event.data.order_id,
-          lat:                    event.data.lat,
-          lon:                    event.data.lon,
-          zone:                   event.data.zone,
-          order_type:             event.data.order_type,
-          status:                 'pending',
-          cluster_id:             null,
-          driver_id:              null,
+          id: event.data.order_id,
+          lat: event.data.lat,
+          lon: event.data.lon,
+          zone: event.data.zone,
+          order_type: event.data.order_type,
+          status: 'pending',
+          cluster_id: null,
+          driver_id: null,
           estimated_prep_minutes: event.data.estimated_prep_minutes,
-          restaurant_name:        event.data.restaurant_name ?? '',
-          restaurant_id:          event.data.restaurant_id ?? null,
-          restaurant_lat:         event.data.restaurant_lat ?? null,
-          restaurant_lon:         event.data.restaurant_lon ?? null,
-          restaurant_zone:        event.data.restaurant_zone ?? '',
-          ordered_at:             event.data.ordered_at ?? null,
-          delivered_at:           null,
+          restaurant_name: event.data.restaurant_name ?? '',
+          restaurant_id: event.data.restaurant_id ?? null,
+          restaurant_lat: event.data.restaurant_lat ?? null,
+          restaurant_lon: event.data.restaurant_lon ?? null,
+          restaurant_zone: event.data.restaurant_zone ?? '',
+          ordered_at: event.data.ordered_at ?? null,
+          delivered_at: null,
         })
         break
 
       case 'ORDER_STATUS_CHANGED':
         upsertOrder(event.data.order_id, {
-          status:    event.data.status,
+          status: event.data.status,
           driver_id: event.data.driver_id ?? undefined,
         })
         break
 
       case 'CLUSTER_FORMED':
         upsertCluster(event.data.cluster_id, {
-          id:           event.data.cluster_id,
-          order_ids:    event.data.order_ids,
+          id: event.data.cluster_id,
+          order_ids: event.data.order_ids,
           centroid_lat: event.data.centroid_lat,
           centroid_lon: event.data.centroid_lon,
-          color:        event.data.color,
-          driver_id:    null,
-          zone_label:   event.data.zone_label,
+          color: event.data.color,
+          driver_id: null,
+          zone_label: event.data.zone_label,
           algorithm_used: 'dbscan',
         })
         event.data.order_ids.forEach((oid) =>
@@ -123,15 +123,15 @@ export function useSimulation() {
       case 'ROUTE_COMPUTED': {
         const driverColor = getOrAssignDriverColor(event.data.driver_id)
         upsertRoute(event.data.route_id, {
-          id:                         event.data.route_id,
-          cluster_id:                 event.data.cluster_id,
-          driver_id:                  event.data.driver_id,
-          driver_name:                event.data.driver_name ?? '',
-          method:                     event.data.method as never,
-          geojson:                    event.data.geojson,
-          total_distance_km:          event.data.total_distance_km,
+          id: event.data.route_id,
+          cluster_id: event.data.cluster_id,
+          driver_id: event.data.driver_id,
+          driver_name: event.data.driver_name ?? '',
+          method: event.data.method as never,
+          geojson: event.data.geojson,
+          total_distance_km: event.data.total_distance_km,
           estimated_duration_minutes: event.data.estimated_duration_minutes,
-          naive_distance_km:          event.data.naive_distance_km,
+          naive_distance_km: event.data.naive_distance_km,
           color: driverColor,
         })
         upsertCluster(event.data.cluster_id, { driver_id: event.data.driver_id })
@@ -143,9 +143,9 @@ export function useSimulation() {
         // FIX: initialise deliveries_completed to 0 here so the field always
         // exists as a number before any DELIVERY_COMPLETED increments it.
         upsertDriver(event.data.driver_id, {
-          status:               'assigned',
-          cluster_id:           event.data.cluster_id,
-          name:                 event.data.driver_name,
+          status: 'assigned',
+          cluster_id: event.data.cluster_id,
+          name: event.data.driver_name,
           deliveries_completed: 0,
         })
         {
@@ -161,10 +161,10 @@ export function useSimulation() {
 
         updateDriverPosition(driver_id, {
           lat, lon,
-          progress:       progress_pct,
+          progress: progress_pct,
           currentOrderId: current_order_id,
-          driverName:     driver_name ?? '',
-          phase:          phase ?? 'delivery',
+          driverName: driver_name ?? '',
+          phase: phase ?? 'delivery',
           restaurantName: restaurant_name ?? '',
         })
         upsertDriver(driver_id, { lat, lon, status: 'en_route' })
@@ -175,7 +175,7 @@ export function useSimulation() {
       case 'DELIVERY_COMPLETED': {
         markOrderDelivered(event.data.order_id)
         upsertOrder(event.data.order_id, {
-          status:       'delivered',
+          status: 'delivered',
           delivered_at: event.data.delivered_at ?? null,
         })
         // FIX: Read current count from store at event time, default to 0 if
@@ -242,6 +242,11 @@ export function useSimulation() {
     try {
       const res = await api.startSimulation(cfg)
       setSessionId(res.session_id)
+
+      // Safety net: give the POST response time to reach the client
+      // and the WS connection time to establish before backend fires events
+      await new Promise(resolve => setTimeout(resolve, 800))
+
       const ws = new SimulationWebSocket(res.session_id, handleEvent, setWsConnected)
       wsRef.current = ws
       ws.connect()
