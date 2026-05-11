@@ -1,8 +1,4 @@
-// src/hooks/useSimulation.ts — FIXED
-// Fix 1: DELIVERY_COMPLETED increments deliveries_completed using Math.max to
-//         guarantee a numeric base (never NaN from undefined+1).
-// Fix 2: DRIVER_ASSIGNED initialises deliveries_completed: 0 if missing,
-//         so the field always exists before any increment.
+// src/hooks/useSimulation.ts 
 
 import { useCallback, useEffect, useRef } from 'react'
 import { SimulationWebSocket } from '@/services/websocket'
@@ -158,6 +154,15 @@ export function useSimulation() {
       case 'DRIVER_MOVED': {
         const { driver_id, driver_name, lat, lon, progress_pct, current_order_id, phase, restaurant_name } = event.data
         if (!Number.isFinite(lat) || !Number.isFinite(lon) || (lat === 0 && lon === 0)) break
+
+        // FIX 4: Throttle position updates — only update if moved enough
+        const currentPos = useMapStore.getState().driverPositions[driver_id];
+        if (currentPos) {
+          const dlat = Math.abs(currentPos.lat - lat);
+          const dlon = Math.abs(currentPos.lon - lon);
+          // Skip update if moved less than ~5 meters (prevents flickering)
+          if (dlat < 0.00004 && dlon < 0.00004) break;
+        }
 
         updateDriverPosition(driver_id, {
           lat, lon,
